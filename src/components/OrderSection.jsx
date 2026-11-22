@@ -7,6 +7,9 @@ import "../OrderSection.css";
 // FUNGSI BANTUAN
 // ==========================================
 
+const gambarFallback =
+  "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=700&q=85";
+
 function rupiah(angka) {
   return new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -19,17 +22,19 @@ function tanggalLokal(offset = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offset);
 
-  const tahun = d.getFullYear();
-  const bulan = String(d.getMonth() + 1).padStart(2, "0");
-  const hari = String(d.getDate()).padStart(2, "0");
-
-  return `${tahun}-${bulan}-${hari}`;
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function formatTanggal(value) {
   if (!value) return "-";
 
-  const [tahun, bulan, hari] = value.split("-").map(Number);
+  const [tahun, bulan, hari] = value
+    .split("-")
+    .map(Number);
 
   return new Intl.DateTimeFormat("id-ID", {
     day: "numeric",
@@ -38,31 +43,27 @@ function formatTanggal(value) {
   }).format(new Date(tahun, bulan - 1, hari));
 }
 
-function tanggalDanJamValid(tanggal, jam) {
+function waktuValid(tanggal, jam) {
   if (!tanggal || !jam) return null;
 
   const waktu = new Date(`${tanggal}T${jam}:00`);
 
-  if (Number.isNaN(waktu.getTime())) return null;
-
-  return waktu;
+  return Number.isNaN(waktu.getTime())
+    ? null
+    : waktu;
 }
 
-const gambarFallback =
-  "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=700&q=85";
-
 // ==========================================
-// KOMPONEN UTAMA
+// KOMPONEN PEMESANAN PELANGGAN
 // ==========================================
 
 export default function OrderSection() {
   const bagianAtas = useRef(null);
   const sedangMengirim = useRef(false);
 
-  // Tahapan
   const [langkah, setLangkah] = useState(1);
 
-  // Data pelanggan
+  // Pelanggan
   const [nama, setNama] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [jenis, setJenis] = useState("Dine In");
@@ -72,13 +73,10 @@ export default function OrderSection() {
   const [tanggal, setTanggal] = useState(tanggalLokal());
   const [jam, setJam] = useState("");
 
-  // Data menu database
+  // Menu
   const [menuKopi, setMenuKopi] = useState([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
   const [errorMenu, setErrorMenu] = useState("");
-
-  // Pencarian
-  const [kategori, setKategori] = useState("Semua Menu");
   const [pencarian, setPencarian] = useState("");
 
   // Keranjang
@@ -92,29 +90,31 @@ export default function OrderSection() {
   const [nomorPesanan, setNomorPesanan] = useState("");
   const [rekapTerkirim, setRekapTerkirim] = useState("");
 
-  // ==========================================
-  // AMBIL MENU DARI SUPABASE
-  // ==========================================
+  // ========================================
+  // AMBIL MENU AKTIF DARI SUPABASE
+  // ========================================
 
   async function ambilMenu() {
     setLoadingMenu(true);
     setErrorMenu("");
 
-    const { data, error: dbError } = await supabase
-      .from("products")
-      .select("id, nama, kategori, harga, deskripsi, gambar")
-      .eq("aktif", true)
-      .order("id", { ascending: true });
+    try {
+      const { data, error: dbError } = await supabase
+        .from("products")
+        .select("id, nama, harga, deskripsi, gambar")
+        .eq("aktif", true)
+        .order("id", { ascending: true });
 
-    if (dbError) {
-      setErrorMenu(
-        "Gagal mengambil menu dari database: " + dbError.message
-      );
-    } else {
+      if (dbError) throw dbError;
+
       setMenuKopi(data || []);
+    } catch (err) {
+      setErrorMenu(
+        "Gagal memuat menu: " + err.message
+      );
+    } finally {
+      setLoadingMenu(false);
     }
-
-    setLoadingMenu(false);
   }
 
   useEffect(() => {
@@ -123,7 +123,7 @@ export default function OrderSection() {
     async function muatMenu() {
       const { data, error: dbError } = await supabase
         .from("products")
-        .select("id, nama, kategori, harga, deskripsi, gambar")
+        .select("id, nama, harga, deskripsi, gambar")
         .eq("aktif", true)
         .order("id", { ascending: true });
 
@@ -131,8 +131,7 @@ export default function OrderSection() {
 
       if (dbError) {
         setErrorMenu(
-          "Gagal mengambil menu dari database: " +
-            dbError.message
+          "Gagal memuat menu: " + dbError.message
         );
       } else {
         setMenuKopi(data || []);
@@ -148,12 +147,12 @@ export default function OrderSection() {
     };
   }, []);
 
-  // ==========================================
-  // SCROLL
-  // ==========================================
+  // ========================================
+  // NAVIGASI
+  // ========================================
 
   function scrollKeAtas() {
-    window.requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
       bagianAtas.current?.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -167,54 +166,43 @@ export default function OrderSection() {
     scrollKeAtas();
   }
 
-  // ==========================================
-  // KATEGORI DAN FILTER
-  // ==========================================
-
-  const kategoriMenu = [
-    "Semua Menu",
-    ...new Set(menuKopi.map((item) => item.kategori)),
-  ];
+  // ========================================
+  // PENCARIAN MENU TANPA KATEGORI
+  // ========================================
 
   const produkTampil = menuKopi.filter((produk) => {
-    const cocokKategori =
-      kategori === "Semua Menu" ||
-      produk.kategori === kategori;
-
     const kata = pencarian.trim().toLowerCase();
 
-    const cocokCari =
+    return (
       produk.nama.toLowerCase().includes(kata) ||
-      (produk.deskripsi || "").toLowerCase().includes(kata);
-
-    return cocokKategori && cocokCari;
+      (produk.deskripsi || "")
+        .toLowerCase()
+        .includes(kata)
+    );
   });
 
-  // ==========================================
-  // TOTAL KERANJANG
-  // ==========================================
-
   const totalBarang = keranjang.reduce(
-    (total, item) => total + item.qty,
+    (hasil, item) => hasil + item.qty,
     0
   );
 
   const totalPembayaran = keranjang.reduce(
-    (total, item) => total + item.harga * item.qty,
+    (hasil, item) =>
+      hasil + item.harga * item.qty,
     0
   );
 
-  // ==========================================
-  // TAMBAH MENU KE KERANJANG
-  // ==========================================
+  // ========================================
+  // KERANJANG
+  // ========================================
 
   function tambahProduk(produk) {
     setKeranjang((sebelumnya) => {
-      const sudahAda = sebelumnya.find(
+      const ada = sebelumnya.find(
         (item) => item.id === produk.id
       );
 
-      if (sudahAda) {
+      if (ada) {
         return sebelumnya.map((item) =>
           item.id === produk.id
             ? {
@@ -225,9 +213,7 @@ export default function OrderSection() {
         );
       }
 
-      if (sebelumnya.length >= 30) {
-        return sebelumnya;
-      }
+      if (sebelumnya.length >= 30) return sebelumnya;
 
       return [
         ...sebelumnya,
@@ -235,7 +221,6 @@ export default function OrderSection() {
           id: produk.id,
           nama: produk.nama,
           harga: produk.harga,
-          kategori: produk.kategori,
           qty: 1,
         },
       ];
@@ -244,10 +229,6 @@ export default function OrderSection() {
     setError("");
   }
 
-  // ==========================================
-  // UBAH JUMLAH MENU
-  // ==========================================
-
   function ubahJumlah(id, perubahan) {
     setKeranjang((sebelumnya) =>
       sebelumnya
@@ -255,7 +236,10 @@ export default function OrderSection() {
           item.id === id
             ? {
                 ...item,
-                qty: Math.min(item.qty + perubahan, 50),
+                qty: Math.min(
+                  item.qty + perubahan,
+                  50
+                ),
               }
             : item
         )
@@ -265,24 +249,25 @@ export default function OrderSection() {
     setError("");
   }
 
-  // ==========================================
+  // ========================================
   // VALIDASI LANGKAH 1
-  // ==========================================
+  // ========================================
 
   function lanjutIdentitas() {
     if (nama.trim().length < 2) {
-      setError("Nama pelanggan minimal 2 karakter.");
+      setError(
+        "Masukkan nama pelanggan minimal 2 karakter."
+      );
       return;
     }
 
     const nomor = whatsapp.replace(/[\s()-]/g, "");
 
-    const validNomor =
-      /^(?:08\d{8,11}|\+628\d{8,11}|628\d{8,11})$/.test(
+    if (
+      !/^(?:08\d{8,11}|\+628\d{8,11}|628\d{8,11})$/.test(
         nomor
-      );
-
-    if (!validNomor) {
+      )
+    ) {
       setError(
         "Nomor WhatsApp tidak valid. Contoh: 081234567890."
       );
@@ -292,40 +277,30 @@ export default function OrderSection() {
     pindahLangkah(2);
   }
 
-  // ==========================================
+  // ========================================
   // VALIDASI LANGKAH 2
-  // ==========================================
+  // ========================================
 
   function lanjutPesanan() {
     if (keranjang.length === 0) {
       setError(
-        "Keranjang masih kosong. Tambahkan minimal satu menu."
+        "Silakan tambahkan minimal satu menu."
       );
       return;
     }
 
-    if (!tanggal) {
-      setError("Silakan pilih tanggal pesanan.");
-      return;
-    }
-
-    if (!jam) {
+    if (!tanggal || !jam) {
       setError(
-        "Silakan pilih jam kedatangan atau pengambilan."
+        "Tanggal dan jam pesanan wajib diisi."
       );
       return;
     }
 
-    const waktu = tanggalDanJamValid(tanggal, jam);
+    const waktu = waktuValid(tanggal, jam);
 
-    if (!waktu) {
-      setError("Tanggal atau jam pesanan tidak valid.");
-      return;
-    }
-
-    if (waktu <= new Date()) {
+    if (!waktu || waktu <= new Date()) {
       setError(
-        "Jadwal pesanan sudah lewat. Pilih waktu yang lebih baru."
+        "Jadwal sudah lewat atau tidak valid. Pilih waktu berikutnya."
       );
       return;
     }
@@ -333,19 +308,19 @@ export default function OrderSection() {
     pindahLangkah(3);
   }
 
-  // ==========================================
-  // MEMBUAT REKAP PESANAN
-  // ==========================================
+  // ========================================
+  // REKAP PESANAN
+  // ========================================
 
   function buatRekap(nomor) {
     return [
       "ONE REFINERY COFFEE",
       "BUKTI PENGAJUAN PESANAN",
-      "------------------------------",
-      `Nomor Pesanan: ${nomor}`,
+      "--------------------------------",
+      `Nomor Pesanan: #${nomor}`,
       `Nama: ${nama.trim()}`,
       `WhatsApp: ${whatsapp}`,
-      `Jenis Layanan: ${jenis}`,
+      `Layanan: ${jenis}`,
       ...(jenis === "Dine In" && nomorMeja.trim()
         ? [`Nomor Meja: ${nomorMeja.trim()}`]
         : []),
@@ -360,18 +335,18 @@ export default function OrderSection() {
           )}`
       ),
       "",
-      `Total Estimasi: ${rupiah(totalPembayaran)}`,
+      `Estimasi Total: ${rupiah(totalPembayaran)}`,
       "Pembayaran: Bayar di Kasir",
       `Catatan: ${catatan.trim() || "-"}`,
       "",
       "Status: Menunggu konfirmasi kasir",
-      "Nominal final mengikuti data yang disimpan sistem.",
+      "Harga final mengikuti data pada sistem kasir.",
     ].join("\n");
   }
 
-  // ==========================================
-  // KIRIM PESANAN KE DATABASE SUPABASE
-  // ==========================================
+  // ========================================
+  // KIRIM PESANAN KE SUPABASE
+  // ========================================
 
   async function kirimPesanan() {
     if (sedangMengirim.current) return;
@@ -381,28 +356,39 @@ export default function OrderSection() {
     setError("");
 
     try {
-      if (nama.trim().length < 2) {
-        throw new Error("Nama pelanggan tidak valid.");
+      const nomor = whatsapp.replace(/[\s()-]/g, "");
+
+      if (
+        nama.trim().length < 2 ||
+        !/^(?:08\d{8,11}|\+628\d{8,11}|628\d{8,11})$/.test(
+          nomor
+        )
+      ) {
+        throw new Error(
+          "Data pelanggan tidak valid."
+        );
       }
 
       if (keranjang.length === 0) {
-        throw new Error("Keranjang masih kosong.");
+        throw new Error("Keranjang kosong.");
       }
 
-      const waktu = tanggalDanJamValid(tanggal, jam);
+      const waktu = waktuValid(tanggal, jam);
 
       if (!waktu || waktu <= new Date()) {
         throw new Error(
-          "Jadwal sudah lewat. Pilih tanggal dan jam yang baru."
+          "Jadwal sudah lewat. Silakan ubah jadwal."
         );
       }
 
       const payload = {
         nama: nama.trim(),
-        whatsapp: whatsapp.replace(/[\s()-]/g, ""),
+        whatsapp: nomor,
         jenis,
         nomor_meja:
-          jenis === "Dine In" ? nomorMeja.trim() : null,
+          jenis === "Dine In"
+            ? nomorMeja.trim()
+            : null,
         jadwal: waktu.toISOString(),
         catatan: catatan.trim(),
         items: keranjang.map((item) => ({
@@ -411,31 +397,31 @@ export default function OrderSection() {
         })),
       };
 
-      const { data, error: kirimError } = await supabase.rpc(
+      const { data, error: dbError } = await supabase.rpc(
         "buat_pesanan",
         { payload }
       );
 
-      if (kirimError) {
-        throw kirimError;
-      }
+      if (dbError) throw dbError;
 
       if (!data) {
         throw new Error(
-          "Database tidak mengembalikan nomor pesanan."
+          "Nomor pesanan tidak diterima dari database."
         );
       }
 
-      const nomor = String(data).slice(0, 8).toUpperCase();
+      const kode = String(data)
+        .slice(0, 8)
+        .toUpperCase();
 
-      setNomorPesanan(nomor);
-      setRekapTerkirim(buatRekap(nomor));
+      setNomorPesanan(kode);
+      setRekapTerkirim(buatRekap(kode));
       setSelesai(true);
       scrollKeAtas();
     } catch (err) {
       setError(
         err.message ||
-          "Gagal mengirim pesanan. Silakan coba kembali."
+          "Gagal mengirim pesanan."
       );
     } finally {
       sedangMengirim.current = false;
@@ -443,24 +429,27 @@ export default function OrderSection() {
     }
   }
 
-  // ==========================================
-  // SALIN REKAP SETELAH PESANAN TERSIMPAN
-  // ==========================================
+  // ========================================
+  // SALIN REKAP
+  // ========================================
 
   async function salinRekap() {
     try {
-      await navigator.clipboard.writeText(rekapTerkirim);
-      window.alert("Rekap pesanan berhasil disalin.");
+      await navigator.clipboard.writeText(
+        rekapTerkirim
+      );
+
+      alert("Rekap pesanan berhasil disalin.");
     } catch {
-      window.alert(
-        "Gagal menyalin otomatis. Silakan salin teks rekap secara manual."
+      alert(
+        "Gagal menyalin. Silakan pilih dan salin teks rekap secara manual."
       );
     }
   }
 
-  // ==========================================
-  // RESET FORMULIR
-  // ==========================================
+  // ========================================
+  // PESAN LAGI
+  // ========================================
 
   function pesanLagi() {
     setLangkah(1);
@@ -470,12 +459,10 @@ export default function OrderSection() {
     setNomorMeja("");
     setTanggal(tanggalLokal());
     setJam("");
-    setKategori("Semua Menu");
     setPencarian("");
     setKeranjang([]);
     setCatatan("");
     setError("");
-    setMengirim(false);
     setSelesai(false);
     setNomorPesanan("");
     setRekapTerkirim("");
@@ -483,10 +470,6 @@ export default function OrderSection() {
     ambilMenu();
     scrollKeAtas();
   }
-
-  // ==========================================
-  // TAMPILAN
-  // ==========================================
 
   return (
     <section
@@ -498,7 +481,10 @@ export default function OrderSection() {
 
       <div className="checkout-container">
 
-        {/* HEADER */}
+        {/* =====================================
+            HEADER
+        ===================================== */}
+
         <div className="checkout-heading">
           <p className="checkout-eyebrow">
             ONE REFINERY COFFEE / PEMESANAN
@@ -509,8 +495,8 @@ export default function OrderSection() {
           </h2>
 
           <p>
-            Pilih Dine In atau Takeaway, temukan kopi
-            favoritmu, lalu kirim pesanan ke kasir.
+            Nikmati kopi langsung di tempat atau
+            pesan untuk dibawa pulang.
           </p>
         </div>
 
@@ -520,27 +506,31 @@ export default function OrderSection() {
 
         {selesai ? (
           <div className="checkout-success">
-            <div className="checkout-success-icon">✓</div>
+            <div className="checkout-success-icon">
+              ✓
+            </div>
 
             <h3>Pesanan Berhasil Dikirim!</h3>
 
             <p>
-              Pesananmu sudah tersimpan di sistem
-              One Refinery Coffee dan sedang menunggu
-              konfirmasi dari kasir.
+              Pesanan sudah tercatat dalam sistem
+              One Refinery Coffee dan sedang
+              menunggu konfirmasi kasir.
             </p>
 
             <div className="checkout-summary">
               <h4>Nomor Pesanan</h4>
 
               <div className="checkout-summary-total">
-                <strong>#{nomorPesanan}</strong>
+                <strong>
+                  #{nomorPesanan}
+                </strong>
               </div>
             </div>
 
             <div className="checkout-info">
-              Simpan nomor pesanan ini.
-              Pembayaran dilakukan langsung di kasir.
+              Pembayaran dilakukan di kasir
+              setelah pesanan dikonfirmasi.
             </div>
 
             <textarea
@@ -551,12 +541,13 @@ export default function OrderSection() {
             />
 
             <div className="checkout-buttons">
+
               <button
                 type="button"
                 className="checkout-secondary-btn"
                 onClick={salinRekap}
               >
-                Salin Rekap Pesanan
+                Salin Rekap
               </button>
 
               <button
@@ -566,15 +557,13 @@ export default function OrderSection() {
               >
                 Buat Pesanan Baru ↗
               </button>
+
             </div>
           </div>
         ) : (
           <div className="checkout-panel">
 
-            {/* =====================================
-                PROGRESS
-            ===================================== */}
-
+            {/* PROGRESS */}
             <div className="checkout-progress">
               {[
                 "Identitas Pelanggan",
@@ -584,7 +573,9 @@ export default function OrderSection() {
                 <div
                   key={judul}
                   className={`checkout-step ${
-                    langkah >= index + 1 ? "active" : ""
+                    langkah >= index + 1
+                      ? "active"
+                      : ""
                   }`}
                 >
                   <span className="checkout-step-number">
@@ -600,7 +591,7 @@ export default function OrderSection() {
             </div>
 
             {/* =====================================
-                LANGKAH 1 - IDENTITAS
+                LANGKAH 1
             ===================================== */}
 
             {langkah === 1 && (
@@ -608,11 +599,11 @@ export default function OrderSection() {
 
                 <div className="checkout-title">
                   <span>01 / DATA PELANGGAN</span>
+
                   <h3>Kenalan Dulu, Yuk!</h3>
 
                   <p>
-                    Isi data pelanggan dan pilih
-                    jenis layanan yang kamu inginkan.
+                    Lengkapi data sebelum memilih menu.
                   </p>
                 </div>
 
@@ -648,14 +639,14 @@ export default function OrderSection() {
                       autoComplete="tel"
                     />
                   </label>
-
                 </div>
 
                 <div className="checkout-subsection">
                   <h4>Jenis Pemesanan</h4>
 
                   <p>
-                    Pilih cara kamu menikmati kopi.
+                    Pilih bagaimana kamu ingin
+                    menikmati kopi.
                   </p>
 
                   <div className="checkout-option-grid">
@@ -663,7 +654,9 @@ export default function OrderSection() {
                     <button
                       type="button"
                       className={`checkout-choice ${
-                        jenis === "Dine In" ? "selected" : ""
+                        jenis === "Dine In"
+                          ? "selected"
+                          : ""
                       }`}
                       onClick={() => {
                         setJenis("Dine In");
@@ -677,15 +670,16 @@ export default function OrderSection() {
                       <strong>Dine In</strong>
 
                       <small>
-                        Nikmati kopi langsung
-                        di One Refinery Coffee.
+                        Nikmati kopi di coffee shop.
                       </small>
                     </button>
 
                     <button
                       type="button"
                       className={`checkout-choice ${
-                        jenis === "Takeaway" ? "selected" : ""
+                        jenis === "Takeaway"
+                          ? "selected"
+                          : ""
                       }`}
                       onClick={() => {
                         setJenis("Takeaway");
@@ -700,10 +694,9 @@ export default function OrderSection() {
                       <strong>Takeaway</strong>
 
                       <small>
-                        Pesan kopi untuk dibawa pulang.
+                        Ambil kopi untuk dibawa pulang.
                       </small>
                     </button>
-
                   </div>
                 </div>
 
@@ -726,7 +719,7 @@ export default function OrderSection() {
                 <div className="checkout-info">
                   {jenis === "Dine In"
                     ? "Pesanan akan dinikmati di tempat."
-                    : "Pesanan disiapkan untuk dibawa pulang."}
+                    : "Pesanan akan disiapkan untuk dibawa pulang."}
                 </div>
 
                 {error && (
@@ -747,11 +740,12 @@ export default function OrderSection() {
                     Lanjut ke Detail Pesanan ↗
                   </button>
                 </div>
+
               </div>
             )}
 
             {/* =====================================
-                LANGKAH 2 - PILIH MENU
+                LANGKAH 2
             ===================================== */}
 
             {langkah === 2 && (
@@ -762,8 +756,8 @@ export default function OrderSection() {
                   <h3>Pilih Kopi Favoritmu</h3>
 
                   <p>
-                    Pilih jadwal dan tambahkan
-                    menu yang kamu inginkan.
+                    Pilih tanggal, jam, dan menu
+                    yang ingin kamu pesan.
                   </p>
                 </div>
 
@@ -803,26 +797,31 @@ export default function OrderSection() {
                         }}
                       />
                     </label>
-
                   </div>
 
                   <p className="checkout-hint">
-                    Pilih waktu yang belum lewat.
-                    Jadwal perlu dikonfirmasi oleh kasir.
+                    Jadwal pesanan harus belum lewat.
+                    Ketersediaan jadwal dikonfirmasi
+                    oleh kasir.
                   </p>
                 </div>
 
-                {/* HEADER KATALOG */}
+                {/* KATALOG */}
                 <div className="checkout-catalog-header">
                   <div>
-                    <h4>Katalog Kopi</h4>
-                    <p>Temukan seduhan pilihanmu.</p>
+                    <h4>Katalog Menu</h4>
+
+                    <p>
+                      Temukan menu favoritmu.
+                    </p>
                   </div>
 
-                  <span>{produkTampil.length} menu</span>
+                  <span>
+                    {produkTampil.length} menu
+                  </span>
                 </div>
 
-                {/* PENCARIAN */}
+                {/* PENCARIAN TANPA KATEGORI */}
                 <div className="checkout-filter">
                   <input
                     type="search"
@@ -830,28 +829,12 @@ export default function OrderSection() {
                     onChange={(e) =>
                       setPencarian(e.target.value)
                     }
-                    placeholder="Cari menu kopi..."
-                    aria-label="Cari menu kopi"
+                    placeholder="Cari menu..."
+                    aria-label="Cari menu"
                   />
                 </div>
 
-                {/* KATEGORI */}
-                <div className="checkout-categories">
-                  {kategoriMenu.map((item) => (
-                    <button
-                      type="button"
-                      key={item}
-                      className={
-                        kategori === item ? "selected" : ""
-                      }
-                      onClick={() => setKategori(item)}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-
-                {/* PRODUK */}
+                {/* DAFTAR PRODUK */}
                 <div className="checkout-products">
 
                   {loadingMenu && (
@@ -865,15 +848,11 @@ export default function OrderSection() {
                       className="checkout-error"
                       role="alert"
                     >
-                      {errorMenu}
+                      <p>{errorMenu}</p>
 
                       <button
                         type="button"
                         onClick={ambilMenu}
-                        style={{
-                          display: "block",
-                          marginTop: 12,
-                        }}
                       >
                         Coba Lagi
                       </button>
@@ -884,8 +863,7 @@ export default function OrderSection() {
                     !errorMenu &&
                     menuKopi.length === 0 && (
                       <p className="checkout-empty">
-                        Menu belum tersedia.
-                        Admin perlu menambahkan menu.
+                        Belum ada menu yang tersedia.
                       </p>
                     )}
 
@@ -907,26 +885,26 @@ export default function OrderSection() {
                       >
                         <div className="checkout-product-image">
                           <img
-                            src={produk.gambar || gambarFallback}
+                            src={
+                              produk.gambar ||
+                              gambarFallback
+                            }
                             alt={produk.nama}
                             loading="lazy"
                             onError={(e) => {
-                              if (
-                                e.currentTarget.src !== gambarFallback
-                              ) {
-                                e.currentTarget.src =
-                                  gambarFallback;
-                              }
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src =
+                                gambarFallback;
                             }}
                           />
                         </div>
 
                         <div className="checkout-product-info">
-                          <small>{produk.kategori}</small>
-
                           <h5>{produk.nama}</h5>
 
-                          <p>{produk.deskripsi || ""}</p>
+                          <p>
+                            {produk.deskripsi || ""}
+                          </p>
 
                           <div className="checkout-product-bottom">
                             <strong>
@@ -953,7 +931,6 @@ export default function OrderSection() {
 
                   <div className="checkout-cart-heading">
                     <h4>Keranjang Pesanan</h4>
-
                     <span>{totalBarang} barang</span>
                   </div>
 
@@ -964,7 +941,7 @@ export default function OrderSection() {
                       <p>Keranjang masih kosong.</p>
 
                       <small>
-                        Pilih menu dari katalog di atas.
+                        Tambahkan menu dari katalog.
                       </small>
                     </div>
                   ) : (
@@ -983,7 +960,6 @@ export default function OrderSection() {
                           </div>
 
                           <div className="checkout-quantity">
-
                             <button
                               type="button"
                               aria-label={`Kurangi ${item.nama}`}
@@ -1005,11 +981,12 @@ export default function OrderSection() {
                             >
                               +
                             </button>
-
                           </div>
 
                           <strong>
-                            {rupiah(item.harga * item.qty)}
+                            {rupiah(
+                              item.harga * item.qty
+                            )}
                           </strong>
                         </div>
                       ))}
@@ -1025,13 +1002,12 @@ export default function OrderSection() {
                   </div>
 
                   <p className="checkout-hint">
-                    Total final dihitung oleh sistem
-                    berdasarkan harga menu di database.
+                    Total final dihitung berdasarkan
+                    harga menu pada database.
                     Pembayaran dilakukan di kasir.
                   </p>
                 </div>
 
-                {/* ERROR */}
                 {error && (
                   <div
                     className="checkout-error checkout-error-inline"
@@ -1042,12 +1018,14 @@ export default function OrderSection() {
                   </div>
                 )}
 
-                {/* NAVIGASI */}
                 <div className="checkout-buttons">
+
                   <button
                     type="button"
                     className="checkout-secondary-btn"
-                    onClick={() => pindahLangkah(1)}
+                    onClick={() =>
+                      pindahLangkah(1)
+                    }
                   >
                     ← Kembali
                   </button>
@@ -1059,13 +1037,13 @@ export default function OrderSection() {
                   >
                     Lanjut Konfirmasi ↗
                   </button>
-                </div>
 
+                </div>
               </div>
             )}
 
             {/* =====================================
-                LANGKAH 3 - KONFIRMASI
+                LANGKAH 3
             ===================================== */}
 
             {langkah === 3 && (
@@ -1073,15 +1051,16 @@ export default function OrderSection() {
 
                 <div className="checkout-title">
                   <span>03 / KONFIRMASI PESANAN</span>
+
                   <h3>Periksa Pesananmu</h3>
 
                   <p>
-                    Pastikan semua data sudah benar
-                    sebelum dikirim ke kasir.
+                    Pastikan data berikut sudah benar
+                    sebelum mengirim pesanan ke kasir.
                   </p>
                 </div>
 
-                {/* INFORMASI PELANGGAN */}
+                {/* IDENTITAS */}
                 <div className="checkout-summary">
                   <h4>Informasi Pelanggan</h4>
 
@@ -1110,6 +1089,7 @@ export default function OrderSection() {
 
                   <div className="checkout-summary-row">
                     <span>Tanggal</span>
+
                     <strong>
                       {formatTanggal(tanggal)}
                     </strong>
@@ -1126,7 +1106,7 @@ export default function OrderSection() {
                   </div>
                 </div>
 
-                {/* DAFTAR PESANAN */}
+                {/* RINCIAN MENU */}
                 <div className="checkout-summary">
                   <h4>Daftar Pesanan</h4>
 
@@ -1140,7 +1120,9 @@ export default function OrderSection() {
                       </span>
 
                       <strong>
-                        {rupiah(item.harga * item.qty)}
+                        {rupiah(
+                          item.harga * item.qty
+                        )}
                       </strong>
                     </div>
                   ))}
@@ -1156,16 +1138,18 @@ export default function OrderSection() {
 
                 {/* CATATAN */}
                 <label className="checkout-field">
-                  <span>Catatan Tambahan (Opsional)</span>
+                  <span>
+                    Catatan Tambahan (Opsional)
+                  </span>
 
                   <textarea
-                    rows="4"
+                    rows={4}
                     maxLength={500}
                     value={catatan}
                     onChange={(e) =>
                       setCatatan(e.target.value)
                     }
-                    placeholder="Contoh: tanpa gula atau sedikit es..."
+                    placeholder="Contoh: tanpa gula, sedikit es..."
                   />
                 </label>
 
@@ -1187,8 +1171,8 @@ export default function OrderSection() {
                   </div>
 
                   <p className="checkout-hint">
-                    Pembayaran dilakukan langsung di
-                    kasir One Refinery Coffee.
+                    Pembayaran dilakukan langsung
+                    di kasir One Refinery Coffee.
                   </p>
                 </div>
 
@@ -1197,34 +1181,36 @@ export default function OrderSection() {
                   <strong>Informasi Penting</strong>
 
                   <p>
-                    Klik tombol konfirmasi untuk
-                    menyimpan pesanan ke database.
-                    Kasir akan menerima pesanan
-                    dengan status baru.
-                    Pesanan belum dianggap diterima
-                    sampai dikonfirmasi oleh kasir.
+                    Pesanan akan disimpan ke sistem.
+                    Kasir akan memeriksa dan menerima
+                    pesanan sebelum diproses.
                   </p>
                 </div>
 
-                {/* ERROR PENGIRIMAN */}
+                {/* ERROR */}
                 {error && (
                   <div
                     className="checkout-error checkout-error-inline"
                     role="alert"
                   >
-                    <strong>Gagal Mengirim Pesanan</strong>
+                    <strong>
+                      Gagal Mengirim Pesanan
+                    </strong>
+
                     <p>{error}</p>
                   </div>
                 )}
 
-                {/* NAVIGASI */}
+                {/* TOMBOL */}
                 <div className="checkout-buttons">
 
                   <button
                     type="button"
                     className="checkout-secondary-btn"
                     disabled={mengirim}
-                    onClick={() => pindahLangkah(2)}
+                    onClick={() =>
+                      pindahLangkah(2)
+                    }
                   >
                     ← Kembali
                   </button>
@@ -1232,8 +1218,8 @@ export default function OrderSection() {
                   <button
                     type="button"
                     className="checkout-main-btn"
-                    onClick={kirimPesanan}
                     disabled={mengirim}
+                    onClick={kirimPesanan}
                   >
                     {mengirim
                       ? "Mengirim Pesanan..."
@@ -1241,13 +1227,11 @@ export default function OrderSection() {
                   </button>
 
                 </div>
-
               </div>
             )}
 
           </div>
         )}
-
       </div>
     </section>
   );

@@ -7,11 +7,11 @@ const supabaseKey =
 
 if (!supabaseUrl || !supabaseKey) {
   throw new Error(
-    "Konfigurasi Supabase belum tersedia. Periksa .env.local."
+    "Konfigurasi Supabase belum lengkap. Periksa .env.local."
   );
 }
 
 export const supabase = createClient(
-  supabaseUrl,
-  supabaseKey
+  supabaseUrl.trim().replace(/\/+$/, ""),
+  supabaseKey.trim()
 );
